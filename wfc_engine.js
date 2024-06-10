@@ -51,7 +51,7 @@ class Tile {
         this.index = null;
 
         /** The name of the tile (will appear in place of index in the tilemap) */
-        this.name = null; // Optional field
+        this.name = undefined; // Optional field
 
         /** Optional field. Tile is treated in a special way depending on the behavior. */
         this.behavior = null;
@@ -296,17 +296,16 @@ function generateTilemap(tileDataJSON, width, height) {
     }
 
 
-
     // Create Tile instances for each tile variant
     tileVariants = json.tileVariants.map(tileData => {
         const tile = new Tile();
         tile.index = tileData.index;
         tile.name = tileData.name;
         tile.behavior = tileData.behavior;
-        tile.up = new Map(Object.entries(tileData.up));
-        tile.right = new Map(Object.entries(tileData.right));
-        tile.down = new Map(Object.entries(tileData.down));
-        tile.left = new Map(Object.entries(tileData.left));
+        tile.up = new Map(tileData.up);
+        tile.right = new Map(tileData.right);
+        tile.down = new Map(tileData.down);
+        tile.left = new Map(tileData.left);
         return tile;
     });
 
@@ -327,9 +326,8 @@ function generateTilemap(tileDataJSON, width, height) {
             const tileIndex = cell.selectedTile;
             const tile = tileVariants[tileIndex];
 
-            const displayName = tile.name ? tile.name : tileIndex.toString();
-
-            tilemap[y][x] = displayName;
+            // If the tile has a name, use that instead of the index
+            tilemap[y][x] = tile.name || tile.index;
         }
     }
 
@@ -550,7 +548,6 @@ function backtrack(steps) {
     // exclude the tile options in the restored grid state
     for (const decision of poppedDecisions) {
         if (decision) {
-            console.log(decision);
             const cell = outputGrid[decision.cell.y][decision.cell.x];
             if (!cell.collapsed) {
                 cell.exclude(decision.tileIndex);
@@ -577,5 +574,6 @@ function saveGridState() {
 
 const fs = require('fs');
 
+console.log("Generating tilemap...");
 const tilemap = generateTilemap('./test-file.json', 10, 10);
-console.log(tilemap);
+console.log("tilemap:", tilemap);
