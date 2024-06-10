@@ -9,7 +9,6 @@
  */
 
 
-
 /** The types of tiles that can be used in the output grid */
 let tileVariants = [];
 
@@ -38,10 +37,215 @@ let decisions = [];
 let backtrackAttempts = 0;
 
 
+
+/**
+ * Tiles refer to the individual images that make up the grid. 
+ * They contain information about their possible neighboring tiles.
+ * 
+ * @author Nathan Hinthorne
+ */
+class Tile {
+    constructor() {
+
+        /** The index of the tile in the tileset */
+        this.index = null;
+
+        /** The name of the tile (will appear in place of index in the tilemap) */
+        this.name = null; // Optional field
+
+        /** Optional field. Tile is treated in a special way depending on the behavior. */
+        this.behavior = null;
+
+
+        // Maps of tile indices to their frequency,
+        // This rolls adjacency rules and frequency hints into one
+
+        /** A Map where the keys are the indices of available tiles to appear above this one, and the values are their corresponding frequencies */
+        this.up = new Map();
+
+        /** A Map where the keys are the indices of available tiles to appear to the right of this one, and the values are their corresponding frequencies */
+        this.right = new Map();
+
+        /** A Map where the keys are the indices of available tiles to appear below this one, and the values are their corresponding frequencies */
+        this.down = new Map();
+
+        /** A Map where the keys are the indices of available tiles to appear to the left of this one, and the values are their corresponding frequencies */
+        this.left = new Map();
+    }
+}
+
+
+
+
+
+/**
+ * Cells are placed in the output grid and contain the possible tiles that can be placed in that cell.
+ * 
+ * @author Nathan Hinthorne
+ */
+class Cell {
+
+    /**
+     * @param {number[]} tileIndices - The indices of the tiles that can be placed in this cell
+     * @param {number} x - The x position of the cell in the output grid
+     * @param {number} y - The y position of the cell in the output grid
+     */
+    constructor(tileIndices, x, y) {
+        /** The maximum entropy this cell could have over the course of the algorithm */
+        this.maxEntropy = tileIndices.length;
+
+        /** This cell's x position in the output grid */
+        this.x = x;
+
+        /** This cell's y position in the output grid */
+        this.y = y;
+
+        /** Whether or not the cell has collapsed into a tile */
+        this.collapsed = false;
+
+        /** The tile index that this cell has collapsed into */
+        this.selectedTile = null;
+
+        /** A Map where the keys are the indices of available tiles to choose from, and the values are their corresponding frequencies */
+        this.options = new Map();
+
+        // This rolls adjacency rules and frequency hints into one
+        // Key: Tile Index, Value: Number of times this tile was found connected to given tile index
+        // start off with every tile as an option
+        for (let tileIndex of tileIndices) {
+            this.options.set(tileIndex, 0);
+        }
+
+        this.cachedEntropy = null;
+        this.entropyUpdated = false;
+    }
+
+    /**
+     * Calculates the entropy of the cell based on the tile options available.
+     * 
+     * @returns {number} The entropy of the cell
+     */
+    calculateEntropy() {
+        if (this.collapsed) {
+            return 0;
+        }
+
+        // if (!this.entropyUpdated) {
+        //   return this.cachedEntropy;
+        // }
+
+        // Approach #1: Rough estimate of entropy (not weighted by frequency)
+        let entropy = this.options.size;
+
+        // Approach #2: Shannon entropy
+        // let totalFrequencies = 0;
+        // for (const [_, freq] of this.options) {
+        //   totalFrequencies += freq
+        // }
+
+        // let entropy = 0;
+        // for (const [_, freq] of this.options) {
+        //   const probability = freq / totalFrequencies; // 1% to 100%
+
+        //   // Formula for Shannon entropy
+        //   entropy -= probability * Math.log2(probability);
+        // }
+
+        this.cachedEntropy = entropy;
+        this.entropyUpdated = false;
+        return entropy;
+    }
+
+    /**
+     * Collapse the cell by picking from the tile options, weighted by their frequency
+     */
+    collapse() {
+        if (this.collapsed) {
+            throw new Error('Cell has already been collapsed');
+        }
+
+        if (this.options.size === 0) {
+            throw new Error('Tried to collapse, but no tile options were available')
+        }
+        // Calculate cumulative frequencies
+        let frequencyDistribution = new Map();
+        let totalFrequency = 0;
+        for (let [tileIndex, frequency] of this.options) {
+            totalFrequency += frequency;
+            frequencyDistribution.set(tileIndex, totalFrequency);
+        }
+
+        // Select a random point in the total frequency range
+        let randomFrequency = Math.floor(Math.random() * totalFrequency);
+
+        // Find the first item which has a cumulative frequency greater than or equal to the random frequency
+        let pick = null;
+        for (let [tileIndex, cumulativeFrequency] of frequencyDistribution) {
+            if (cumulativeFrequency >= randomFrequency) {
+                pick = tileIndex;
+                break;
+            }
+        }
+
+        this.selectedTile = pick;
+
+        this.options.clear(); // erase all other options
+
+        this.collapsed = true;
+    }
+
+    /**
+     * @param {number} tileIndex - The index of the tile to exclude from the cell's options
+     */
+    exclude(tileIndex) {
+        if (this.collapsed) {
+            throw new Error('Cell has already been collapsed');
+        }
+
+        this.options.delete(tileIndex);
+    }
+
+    /**  
+     * Recreates a cell from a JSON object.
+     * Used for backtracking.
+     * 
+     * @param {Object} obj - The object to recreate the cell from
+     * @returns {Cell} - The cell recreated from the object
+     */
+    static fromObject(obj) {
+        let cell = new Cell([], obj.x, obj.y);
+        cell.maxEntropy = obj.maxEntropy;
+        cell.collapsed = obj.collapsed;
+        cell.selectedTile = obj.selectedTile;
+        cell.cachedEntropy = obj.cachedEntropy;
+        cell.entropyUpdated = obj.entropyUpdated;
+
+        for (let [tileIndex, frequency] of obj.options) {
+            cell.options.set(tileIndex, frequency);
+        }
+
+        return cell;
+    }
+}
+
+
+/**
+ * Represents a decision to collapse a cell into a particular tile.
+ * 
+ * @author Nathan Hinthorne
+ */
+class Decision {
+    constructor(cell, tileIndex) {
+        this.cell = cell;
+        this.tileIndex = tileIndex;
+    }
+}
+
+
 /**
  * Uses the Wave Function Collapse algorithm to generate a tilemap represented as a 2D array of tile indices.
  * 
- * @param {string} tileDataJSON The JSON string containing the tile rules. Format should be as follows: 
+ * @param {string} tileDataJSON Either a path to a JSON file or a JSON string containing the tile rules. Format should be as follows: 
  * { 
  *   "tileVariants": [
  *     {
@@ -61,18 +265,41 @@ let backtrackAttempts = 0;
  * @param {number} width The desired width of the generated tilemap
  * @param {number} height The desired height of the generated tilemap
  * 
- * @returns {string[][]} A 2D array of tile indices which represents the generated tilemap
+ * @returns {string[][]} A 2D array of tile indices (or tile names if they exist) which represents the generated tilemap
  */
-export function generateTilemap(tileDataJSON, width, height) {
+function generateTilemap(tileDataJSON, width, height) {
+    // Check if the width and height are positive numbers
+    if (typeof width !== 'number' || typeof height !== 'number' || width <= 0 || height <= 0) {
+        throw new Error('Invalid width or height');
+    }
+
     outputWidth = width;
     outputHeight = height;
 
-    // parse the JSON data and setup the variables
-    const json = JSON.parse(tileDataJSON);
+
+    let json;
+    if (typeof tileDataJSON !== 'string') {
+        throw new Error('tileDataJSON must be a JSON string or a path to a JSON file');
+    } else {
+        try {
+            // Try to parse the input as JSON
+            json = JSON.parse(tileDataJSON);
+        } catch (e) {
+            // If parsing fails, try to read it as a file
+            try {
+                tileDataJSON = fs.readFileSync(tileDataJSON, 'utf8');
+                json = JSON.parse(tileDataJSON);
+            } catch (e) {
+                throw new Error('tileDataJSON must be a valid JSON string or a path to a JSON file');
+            }
+        }
+    }
+
+
 
     // Create Tile instances for each tile variant
     tileVariants = json.tileVariants.map(tileData => {
-        const tile = new Tile(img);
+        const tile = new Tile();
         tile.index = tileData.index;
         tile.name = tileData.name;
         tile.behavior = tileData.behavior;
@@ -127,7 +354,7 @@ function initializeOutputGrid() {
             outputGrid[y][x] = new Cell(tileIndices, x, y);
 
             // Exclude floor tiles from the options of every cell EXCEPT bottom row
-            if (y < dim - 1) {
+            if (y < outputHeight - 1) {
                 for (const floorTile of floorTiles) {
                     outputGrid[y][x].exclude(floorTile.index);
                 }
@@ -173,7 +400,9 @@ function populateOutputGrid() {
         }
     }
     if (stopIndex > 0) uncollapsedCells.splice(stopIndex); // cut out all cells with higher entropy
-    const cell = random(uncollapsedCells); // pick a random cell that's tied for lowest entropy
+    // pick a random cell that's tied for lowest entropy
+    const randomIndex = Math.floor(Math.random() * uncollapsedCells.length);
+    const cell = uncollapsedCells[randomIndex];
 
 
     /*
@@ -320,12 +549,15 @@ function backtrack(steps) {
 
     // exclude the tile options in the restored grid state
     for (const decision of poppedDecisions) {
-        const cell = outputGrid[decision.cell.y][decision.cell.x];
-        if (!cell.collapsed) {
-            cell.exclude(decision.tileIndex);
-        } else {
-            initializeOutputGrid();
-            break;
+        if (decision) {
+            console.log(decision);
+            const cell = outputGrid[decision.cell.y][decision.cell.x];
+            if (!cell.collapsed) {
+                cell.exclude(decision.tileIndex);
+            } else {
+                initializeOutputGrid();
+                break;
+            }
         }
     }
 }
@@ -340,3 +572,10 @@ function saveGridState() {
         return cellCopy;
     })));
 }
+
+
+
+const fs = require('fs');
+
+const tilemap = generateTilemap('./test-file.json', 10, 10);
+console.log(tilemap);
